@@ -31,4 +31,64 @@ service:
 EOF
 
 ./helm-values-to-crd test.yaml redis.acme.org/v1alpha1
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  creationTimestamp: null
+  name: redis.acme.org
+spec:
+  group: acme.org
+  names:
+    kind: redis
+    plural: redis
+    singular: redis
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            properties:
+              image:
+                properties:
+                  repository:
+                    type: string
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              monitoring:
+                properties:
+                  enabled:
+                    type: boolean
+                  prometheus:
+                    properties:
+                      name:
+                        type: string
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  serviceAnnotations:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  serviceMonitor:
+                    type: boolean
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              service:
+                properties:
+                  port:
+                    type: integer
+                  type:
+                    type: string
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            type: object
+        type: object
+    served: true
+    storage: true
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: null
+  storedVersions: null
 ```
