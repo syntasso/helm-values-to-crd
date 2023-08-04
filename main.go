@@ -19,31 +19,31 @@ func main() {
 		fmt.Printf("expected 2 args: values file path and Kubernetes GVK.\nExample:: ./helm-values-to-crd test.yaml redis.platform.kratix.io/v1alpha1\n")
 		os.Exit(1)
 	}
-
 	valuesFile := os.Args[1]
-
 	gvk := os.Args[2]
 
-	//e.g. redis.platform.kratix.io/v1alpha1
-	kind := strings.Split(gvk, ".")[0]
-	version := strings.Split(gvk, "/")[len(strings.Split(gvk, "/"))-1]
-	group := strings.TrimSuffix(strings.TrimPrefix(gvk, fmt.Sprintf("%s.", kind)), fmt.Sprintf("/%s", version))
+	kind, version, group := splitGVK(gvk)
 
+	// Read the values file
 	var template map[string]interface{}
 	templateBytes, err := ioutil.ReadFile(valuesFile)
 	if err != nil {
 		panic("failed to read file " + valuesFile + ", " + err.Error())
 	}
+
+	// Unmarshal the values file
 	err = yaml.Unmarshal(templateBytes, &template)
 	if err != nil {
-		panic("failed to read unmarshal " + valuesFile + ", " + err.Error())
+		panic("failed tounmarshal " + valuesFile + ", " + err.Error())
 	}
 
+	// Convert the values file to a CRD
 	crd, err := convertValuesToCRD(context.TODO(), template, group, version, kind)
 	if err != nil {
 		panic("failed to generate crd: " + err.Error())
 	}
 
+	// Marshal CRD to bytes
 	bytes, err := yamlsig.Marshal(crd)
 	if err != nil {
 		panic(err)
@@ -52,12 +52,20 @@ func main() {
 	fmt.Println(string(bytes))
 }
 
+func splitGVK(gvk string) (string, string, string) {
+	kind := strings.Split(gvk, ".")[0]
+	version := strings.Split(gvk, "/")[len(strings.Split(gvk, "/"))-1]
+	group := strings.TrimSuffix(strings.TrimPrefix(gvk, fmt.Sprintf("%s.", kind)), fmt.Sprintf("/%s", version))
+	return kind, version, group
+}
+
 func convertValuesToCRD(ctx context.Context, template map[string]interface{}, group, version, kind string) (*apiextensionsv1.CustomResourceDefinition, error) {
 	var validationSchema *apiextensionsv1.JSONSchemaProps = &apiextensionsv1.JSONSchemaProps{
 		Type:       "object",
 		Properties: map[string]apiextensionsv1.JSONSchemaProps{},
 	}
 
+	//Auto inject the `spec: ` top level key
 	var openAPIV3Schema *apiextensionsv1.JSONSchemaProps = &apiextensionsv1.JSONSchemaProps{
 		Type: "object",
 		Properties: map[string]apiextensionsv1.JSONSchemaProps{
@@ -65,10 +73,12 @@ func convertValuesToCRD(ctx context.Context, template map[string]interface{}, gr
 		},
 	}
 
+	//Add to the `spec` the keys from the values file
 	for key, value := range map[string]interface{}(template) {
-		validationSchema.Properties[key] = getJSONSchema(value)
+		validationSchema.Properties[key] = generateJSONSchemaFromValue(value)
 	}
 
+	//Generate CRD with the spec and GVK
 	pluralKind := strings.ToLower(pluralize.NewClient().Plural(kind))
 	xaasCRD := &apiextensionsv1.CustomResourceDefinition{
 		TypeMeta: metav1.TypeMeta{
@@ -102,7 +112,7 @@ func convertValuesToCRD(ctx context.Context, template map[string]interface{}, gr
 	return xaasCRD, nil
 }
 
-func getJSONSchema(value interface{}) apiextensionsv1.JSONSchemaProps {
+func generateJSONSchemaFromValue(value interface{}) apiextensionsv1.JSONSchemaProps {
 	boolTrue := true
 	switch valueType := value.(type) {
 	case string:
@@ -121,7 +131,7 @@ func getJSONSchema(value interface{}) apiextensionsv1.JSONSchemaProps {
 		v := value.([]interface{})
 		var schemaV apiextensionsv1.JSONSchemaProps
 		if len(v) > 0 {
-			schemaV = getJSONSchema(v[0])
+			schemaV = generateJSONSchemaFromValue(v[0])
 		} else {
 			schemaV = apiextensionsv1.JSONSchemaProps{
 				XIntOrString: true,
@@ -136,7 +146,7 @@ func getJSONSchema(value interface{}) apiextensionsv1.JSONSchemaProps {
 	case map[string]interface{}:
 		jsonSchema := map[string]apiextensionsv1.JSONSchemaProps{}
 		for key, value := range valueType {
-			jsonSchema[key] = getJSONSchema(value)
+			jsonSchema[key] = generateJSONSchemaFromValue(value)
 		}
 		return apiextensionsv1.JSONSchemaProps{
 			Type:                   "object",
@@ -150,7 +160,7 @@ func getJSONSchema(value interface{}) apiextensionsv1.JSONSchemaProps {
 			if !ok {
 				panic(fmt.Sprintf("key is not string: %v", key))
 			}
-			jsonSchema[keyString] = getJSONSchema(value)
+			jsonSchema[keyString] = generateJSONSchemaFromValue(value)
 		}
 		return apiextensionsv1.JSONSchemaProps{
 			Type:                   "object",
